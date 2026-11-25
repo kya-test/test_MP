@@ -116,7 +116,7 @@ function setupDetailScrollbar(scrollArea, scrollbar) {
 }
 
 function normalizeIngredient(value) {
-  return value
+  return String(value || "")
     .toLocaleLowerCase("id")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -163,6 +163,7 @@ function fitTitleFontSize(element, maxSize, minSize) {
 export function renderRecipeDetail(
   recipe,
   availableIngredientNames = [],
+  restoreState = null,
 ) {
   const recipeTitle = document.querySelector("#detail-recipe-title");
   const missingSection = document.querySelector("#detail-missing-section");
@@ -177,7 +178,6 @@ export function renderRecipeDetail(
   const stepsLikeButton = document.querySelector("#steps-like");
   const feedback = document.querySelector("#detail-feedback");
   const detailScreen = document.querySelector("#recipe-detail");
-  const detailBody = document.querySelector("#detail-body");
   const detailScrollbar = document.querySelector(".detail-scrollbar");
 
   if (
@@ -194,13 +194,12 @@ export function renderRecipeDetail(
     !(stepsLikeButton instanceof HTMLButtonElement) ||
     !(feedback instanceof HTMLElement) ||
     !(detailScreen instanceof HTMLElement) ||
-    !(detailBody instanceof HTMLElement) ||
     !(detailScrollbar instanceof HTMLImageElement)
   ) {
     throw new Error("Elemen tampilan detail resep tidak ditemukan.");
   }
 
-  setupLangkahMemasak(recipe, detailScreen);
+  const stepsScreens = setupLangkahMemasak(recipe, detailScreen);
 
   const ingredients = Array.isArray(recipe.bahan) ? recipe.bahan : [];
   const normalizedAvailableNames = availableIngredientNames
@@ -209,6 +208,9 @@ export function renderRecipeDetail(
   const hasAvailabilityComparison = normalizedAvailableNames.length > 0;
   const isAvailable = (ingredient) => {
     const name = normalizeIngredient(ingredient.nama_bahan || "");
+    if (!name) {
+      return false;
+    }
     return normalizedAvailableNames.some(
       (available) => name.includes(available) || available.includes(name),
     );
@@ -249,9 +251,9 @@ export function renderRecipeDetail(
   }
 
   for (const [button, isSelected, selectedLabel, defaultLabel] of [
-  [likeButton, recipe.sudah_like === true, "Batal sukai resep", "Sukai resep"],
-  [stepsLikeButton, recipe.sudah_like === true, "Batal sukai resep", "Sukai resep"],
-  [bookmarkButton, recipe.sudah_simpan === true, "Hapus dari tersimpan", "Simpan resep"],
+    [likeButton, recipe.sudah_like === true, "Batal sukai resep", "Sukai resep"],
+    [stepsLikeButton, recipe.sudah_like === true, "Batal sukai resep", "Sukai resep"],
+    [bookmarkButton, recipe.sudah_simpan === true, "Hapus dari tersimpan", "Simpan resep"],
   ]) {
     button.setAttribute("aria-pressed", String(isSelected));
     button.setAttribute("aria-label", isSelected ? selectedLabel : defaultLabel);
@@ -267,9 +269,12 @@ export function renderRecipeDetail(
       }
     }
   }
-  
 
   feedback.hidden = true;
   feedback.textContent = "";
   setupDetailScrollbar(detailScreen, detailScrollbar);
+
+  if (restoreState) {
+    stepsScreens.restore(restoreState);
+  }
 }

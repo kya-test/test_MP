@@ -1,11 +1,128 @@
 import { createRecipeCard, renderPagination } from "./recipe-view.js";
 import { renderRecipeDetail } from "./recipe-detail.js";
 import { initFilters } from "./filters.js";
+import { readViewState, updateViewState } from "./view-state.js";
+import { API_BASE_URL } from "./api.js";
+
+const UNSUPPORTED_CHARACTER_PATTERN = /[^\x00-\x7F]/;
+const EMOJI_PATTERN =
+  /[\p{Extended_Pictographic}\p{Regional_Indicator}\p{Emoji_Modifier}\u200D\uFE0E\uFE0F\u20E3]/gu;
+
+export const EMAIL_ERROR_MESSAGE =
+  "Format email tidak sesuai (contoh: madinatul@gmail.com)";
+export const PASSWORD_ERROR_MESSAGE =
+  "Kata sandi harus terdiri dari 8 hingga 64 karakter dan harus mengandung kombinasi huruf dan angka";
+
+export function containsUnsupportedCharacter(value) {
+  return UNSUPPORTED_CHARACTER_PATTERN.test(value);
+}
+
+export function containsUnsupportedEmailCharacter(value) {
+  return (
+    containsUnsupportedCharacter(value) ||
+    /(?:^|[.@])xn--[a-z0-9-]+/i.test(value)
+  );
+}
+
+export function sanitizeEmailUnsupportedCharacters(value) {
+  return sanitizeUnsupportedCharacters(value);
+}
+
+export function sanitizeUnsupportedCharacters(value) {
+  return value
+    .replace(EMOJI_PATTERN, "")
+    .replace(/[^\x00-\x7F]/g, "");
+}
+
+export function blockUnsupportedCharacters(
+  input,
+  {
+    message,
+    setError,
+    clearError,
+    isEmailIdentifier = false,
+    requireEmailMarker = false,
+  },
+) {
+  const insertCleanedText = (text) => {
+    const cleanedText = sanitizeUnsupportedCharacters(text);
+    if (input.type === "email") {
+      input.value = `${input.value}${cleanedText}`;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
+
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    input.setRangeText(cleanedText, start, end, "end");
+  };
+
+  const rejectBeforeInput = (event) => {
+    if (!event.inputType?.startsWith("insert")) return;
+    if (!event.data) return;
+    const hasUnsupportedData = isEmailIdentifier
+      ? containsUnsupportedEmailCharacter(event.data)
+      : containsUnsupportedCharacter(event.data);
+    if (!hasUnsupportedData) return;
+
+    const candidate = `${input.value}${event.data}`;
+    if (requireEmailMarker && !candidate.includes("@")) return;
+
+    const cleanedText = sanitizeUnsupportedCharacters(event.data);
+    event.preventDefault();
+    if (!cleanedText) {
+      return;
+    }
+    insertCleanedText(cleanedText);
+  };
+
+  const rejectPaste = (event) => {
+    const pastedText = event.clipboardData?.getData("text") || "";
+    const hasUnsupportedText = isEmailIdentifier
+      ? containsUnsupportedEmailCharacter(pastedText)
+      : containsUnsupportedCharacter(pastedText);
+    if (!hasUnsupportedText) return;
+
+    const candidate = `${input.value}${pastedText}`;
+    if (requireEmailMarker && !candidate.includes("@")) return;
+
+    event.preventDefault();
+    if (!sanitizeUnsupportedCharacters(pastedText)) {
+      return;
+    }
+    insertCleanedText(pastedText);
+  };
+
+  input.addEventListener("beforeinput", rejectBeforeInput);
+  input.addEventListener("paste", rejectPaste);
+  input.addEventListener("input", () => {
+    if (requireEmailMarker && !input.value.includes("@")) {
+      clearError();
+      return;
+    }
+
+    const cleanedValue = isEmailIdentifier
+      ? sanitizeEmailUnsupportedCharacters(input.value)
+      : sanitizeUnsupportedCharacters(input.value);
+    if (cleanedValue !== input.value) {
+      input.value = cleanedValue;
+    }
+    clearError();
+  });
+  input.addEventListener("change", () => {
+    const cleanedValue = isEmailIdentifier
+      ? sanitizeEmailUnsupportedCharacters(input.value)
+      : sanitizeUnsupportedCharacters(input.value);
+    if (cleanedValue !== input.value) {
+      input.value = cleanedValue;
+    }
+    clearError();
+  });
+}
 
 const MAX_ADDITIONAL_INGREDIENTS = 5;
 const MAX_TOTAL_INGREDIENTS = 6;
 const DESKTOP_API_PAGES_PER_DISPLAY_PAGE = 4;
-const API_BASE_URL = "http://127.0.0.1:5000/api";
 
 function getIngredients(value) {
   return value
@@ -21,9 +138,15 @@ async function fetchRecipes(endpoint, params = {}) {
   }
 
   const token = localStorage.getItem("token");
-  const response = await fetch(url, {
+  let response = await fetch(url, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
+
+  if (response.status === 401 && token) {
+    localStorage.removeItem("token");
+    response = await fetch(url);
+  }
+
   const result = await response.json();
   if (!response.ok || result.status === "error") {
     throw new Error(result.message || "Permintaan resep gagal.");
@@ -251,6 +374,11 @@ export function initInput() {
   let previousScrollPosition = 0;
   let isCopyingMissingList = false;
   let lastMissingListCopyAt = 0;
+  let hasShownMultiRecipeWarning = false;
+
+  const filters = initFilters(() => {
+    void loadRecipes(currentSearch);
+  });
 
   function getCurrentSearchValues() {
     return {
@@ -363,6 +491,7 @@ export function initInput() {
   }
 
   function closeRecipeDetail() {
+    updateViewState({ recipe: null });
     const shouldRefreshMostLiked = currentSearch === null && !isSavedViewActive;
     latestDetailRequestId += 1;
     detailScreen.hidden = true;
@@ -387,6 +516,7 @@ export function initInput() {
   }
 
   window.addEventListener("recipe:navigate-home", () => {
+    updateViewState({ view: null, recipe: null });
     isSavedViewActive = false;
     const stepsScreen = document.querySelector("#recipe-steps-screen");
     const cookingModeScreen = document.querySelector("#cooking-mode-screen");
@@ -402,6 +532,9 @@ export function initInput() {
   });
 
   window.addEventListener("recipe:navigate-saved", () => {
+    if (!localStorage.getItem("token")) {
+      return;
+    }
     isSavedViewActive = true;
     currentSearch = null;
     const stepsScreen = document.querySelector("#recipe-steps-screen");
@@ -427,12 +560,14 @@ export function initInput() {
     void openRecipeDetail(card);
   });
 
-  async function openRecipeDetail(card) {
+  async function openRecipeDetail(card, { restore = null } = {}) {
     const recipeId = card.dataset.recipeId;
     if (!recipeId || !/^\d+$/.test(recipeId)) {
       setDetailFeedback("ID resep tidak valid.");
       return;
     }
+
+    updateViewState(restore ? { recipe: recipeId } : { recipe: recipeId, screen: null });
 
     const requestId = ++latestDetailRequestId;
     previousScrollPosition = window.scrollY;
@@ -476,7 +611,7 @@ export function initInput() {
 
       activeRecipe = recipe;
       activeAvailableIngredients = availableIngredients;
-      renderRecipeDetail(recipe, activeAvailableIngredients);
+      renderRecipeDetail(recipe, activeAvailableIngredients, restore);
     } catch (error) {
       if (requestId !== latestDetailRequestId) {
         return;
@@ -509,13 +644,12 @@ export function initInput() {
         headers["Authorization"] = `Bearer ${token}`;
       }
 
-      // Selalu kirim request ke backend seperti codingan Ayes
       const response = await fetch(`${API_BASE_URL}/recipes/${recipeId}/like`, {
         method: isLiked ? "POST" : "DELETE",
-        headers: headers,
+        headers,
       });
       const result = await response.json();
-      
+
       if (!response.ok || result.status === "error") {
         throw new Error(result.message || "Aksi resep gagal.");
       }
@@ -644,6 +778,7 @@ export function initInput() {
     const requestId = ++latestRequestId;
     currentSearch = search;
     currentPage = page;
+    recipeGrid.classList.toggle("is-most-liked", !search);
     emptyState.textContent = "Memuat resep...";
     emptyState.hidden = false;
     recipeGrid.replaceChildren();
@@ -684,7 +819,7 @@ export function initInput() {
         firstApiPage + apiPagesPerDisplayPage - 1,
         nextTotalApiPages,
       );
-      const remainingPages = await Promise.all(
+      const remainingPageResults = await Promise.allSettled(
         Array.from(
           { length: Math.max(0, lastApiPage - firstApiPage) },
           (_, index) =>
@@ -694,6 +829,9 @@ export function initInput() {
             }),
         ),
       );
+      const remainingPages = remainingPageResults
+        .filter((pageResult) => pageResult.status === "fulfilled")
+        .map((pageResult) => pageResult.value);
 
       if (requestId !== latestRequestId) {
         return;
@@ -729,7 +867,7 @@ export function initInput() {
         recipeGrid.style.opacity = "";
       });
       if (visibleRecipes.length === 0) {
-        emptyState.textContent = "Resep tidak ditemukan.";
+        emptyState.textContent = "Data resep tidak tersedia";
         emptyState.hidden = false;
         if (search?.type === "ingredients" && page === 1) {
           showValidationDialog(
@@ -743,6 +881,7 @@ export function initInput() {
       } else {
         emptyState.hidden = true;
       }
+
       renderPagination(
         pagination,
         page,
@@ -752,19 +891,15 @@ export function initInput() {
         },
         search ? undefined : 5,
       );
-      updateRecipeListScrollbar();
     } catch (error) {
       if (requestId !== latestRequestId) {
         return;
       }
 
-      emptyState.textContent = "Resep tidak dapat dimuat.";
+      emptyState.textContent = "Data Resep tidak tersedia";
       emptyState.hidden = false;
       recipeGrid.style.opacity = "";
       updateRecipeListScrollbar();
-      showValidationDialog(
-        `Gagal mengambil resep dari server. ${error.message}`,
-      );
     }
   }
 
@@ -809,7 +944,15 @@ export function initInput() {
 
   recipeQueryInput.addEventListener("input", () => {
     updateFilterButtonState();
-    if (getIngredients(recipeQueryInput.value).length > 1) {
+    const hasSeparator = /[,;\n]/.test(recipeQueryInput.value);
+
+    if (!hasSeparator) {
+      hasShownMultiRecipeWarning = false;
+      return;
+    }
+
+    if (!hasShownMultiRecipeWarning && !validationDialog.open) {
+      hasShownMultiRecipeWarning = true;
       showValidationDialog("Masukkan hanya 1 nama resep");
     }
   });
@@ -828,7 +971,7 @@ export function initInput() {
       return;
     }
 
-    if (getIngredients(recipeName).length > 1) {
+    if (/[,;\n]/.test(recipeName) || getIngredients(recipeName).length > 1) {
       showValidationDialog("Masukkan hanya 1 nama resep");
       return;
     }
@@ -942,10 +1085,6 @@ export function initInput() {
     }
   });
 
-  const filters = initFilters(() => {
-    void loadRecipes(currentSearch);
-  });
-
   desktopRecipeMedia.addEventListener("change", () => {
     const nextPagesPerDisplayPage = desktopRecipeMedia.matches
       ? DESKTOP_API_PAGES_PER_DISPLAY_PAGE
@@ -966,11 +1105,32 @@ export function initInput() {
 
   updateFilterButtonState();
   void loadRecipes(null);
-  const recipeIdFromLogin = new URLSearchParams(window.location.search).get("recipe");
-  if (recipeIdFromLogin && /^\d+$/.test(recipeIdFromLogin)) {
-    history.replaceState(null, "", window.location.pathname);
-    const recipeCard = document.createElement("article");
-    recipeCard.dataset.recipeId = recipeIdFromLogin;
-    void openRecipeDetail(recipeCard);
-  }
+
+  return {
+    /**
+- Pulihkan layar detail / langkah / mode memasak dari URL setelah refresh.
+- Dipanggil main.js PALING AKHIR: halaman simpan atau profil yang dipulihkan
+- lebih dulu tidak boleh menimpa layar detail yang ada di atasnya.
+     */
+    restoreFromUrl() {
+      const state = readViewState();
+      if (!state.recipe) {
+        return;
+      }
+
+      if (state.view === "saved" && localStorage.getItem("token")) {
+        isSavedViewActive = true;
+        const savedScreen = document.querySelector("#view-saved");
+        if (savedScreen instanceof HTMLElement) {
+          savedScreen.hidden = true;
+        }
+      }
+
+      const recipeCard = document.createElement("article");
+      recipeCard.dataset.recipeId = state.recipe;
+      void openRecipeDetail(recipeCard, {
+        restore: { screen: state.screen, step: state.step },
+      });
+    },
+  };
 }

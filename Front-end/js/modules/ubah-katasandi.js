@@ -1,4 +1,14 @@
-const API_BASE_URL = "http://127.0.0.1:5000/api";
+import { readViewState, updateViewState } from "./view-state.js";
+import {
+  API_BASE_URL,
+  isNetworkConnectionError,
+  NETWORK_CONNECTION_ERROR_MESSAGE,
+} from "./api.js";
+import {
+  blockUnsupportedCharacters,
+  containsUnsupportedCharacter,
+  PASSWORD_ERROR_MESSAGE,
+} from "./input.js";
 
 export function initUbahKataSandi() {
   const passwordDialog = document.querySelector("#profile-password-dialog");
@@ -55,6 +65,16 @@ export function initUbahKataSandi() {
     clearFormError();
   }
 
+  fields.forEach((input) => {
+    if (input instanceof HTMLInputElement) {
+      blockUnsupportedCharacters(input, {
+        message: PASSWORD_ERROR_MESSAGE,
+        setError: (message) => setFieldError(input, message),
+        clearError: () => clearFieldError(input),
+      });
+    }
+  });
+
   function validatePasswordInputs(currentPass, newPass, confirmPass) {
     clearAllErrors();
     let isValid = true;
@@ -62,6 +82,9 @@ export function initUbahKataSandi() {
     fields.forEach((input) => {
       if (input instanceof HTMLInputElement && input.value.length === 0) {
         setFieldError(input, "Kolom ini wajib diisi");
+        isValid = false;
+      } else if (input instanceof HTMLInputElement && containsUnsupportedCharacter(input.value)) {
+        setFieldError(input, PASSWORD_ERROR_MESSAGE);
         isValid = false;
       }
     });
@@ -74,7 +97,7 @@ export function initUbahKataSandi() {
     ];
     values.forEach(([input, value]) => {
       if (/\s/.test(value)) {
-        setFieldError(input, "Kata sandi tidak boleh mengandung spasi");
+        setFieldError(input, PASSWORD_ERROR_MESSAGE);
         isValid = false;
       }
     });
@@ -85,7 +108,7 @@ export function initUbahKataSandi() {
     if (newPass.length < 8 || newPass.length > 64 || !hasLettersAndNumbers) {
       setFieldError(
         passwordNextInput,
-        "Kata sandi harus terdiri dari 8 hingga 64 karakter dan hanya mengandung kombinasi huruf dan angka",
+        PASSWORD_ERROR_MESSAGE,
       );
       isValid = false;
     }
@@ -126,14 +149,26 @@ export function initUbahKataSandi() {
       return;
     }
 
+    if (
+      !(passwordCurrentInput instanceof HTMLInputElement) ||
+      !(passwordNextInput instanceof HTMLInputElement) ||
+      !(passwordConfirmInput instanceof HTMLInputElement)
+    ) {
+      return;
+    }
+
     const currentPass = passwordCurrentInput.value;
     const newPass = passwordNextInput.value;
     const confirmPass = passwordConfirmInput.value;
     if (!validatePasswordInputs(currentPass, newPass, confirmPass)) return;
 
-    btnConfirmPassword.disabled = true;
-    btnConfirmPassword.textContent = "Menyimpan...";
-    passwordForm.setAttribute("aria-busy", "true");
+    if (btnConfirmPassword instanceof HTMLButtonElement) {
+      btnConfirmPassword.disabled = true;
+      btnConfirmPassword.textContent = "Menyimpan...";
+    }
+    if (passwordForm instanceof HTMLFormElement) {
+      passwordForm.setAttribute("aria-busy", "true");
+    }
 
     try {
       const response = await fetch(`${API_BASE_URL}/auth/change-password`, {
@@ -166,25 +201,60 @@ export function initUbahKataSandi() {
       if (successModal instanceof HTMLDialogElement) successModal.showModal();
     } catch (error) {
       console.error("Gagal mengubah kata sandi:", error);
-      showFormError(error.message || "Terjadi kesalahan saat memperbarui kata sandi.");
+      showFormError(
+        isNetworkConnectionError(error)
+          ? NETWORK_CONNECTION_ERROR_MESSAGE
+          : error.message || "Terjadi kesalahan saat memperbarui kata sandi.",
+      );
     } finally {
-      btnConfirmPassword.disabled = false;
-      btnConfirmPassword.textContent = "Simpan Kata Sandi";
-      passwordForm.removeAttribute("aria-busy");
+      if (btnConfirmPassword instanceof HTMLButtonElement) {
+        btnConfirmPassword.disabled = false;
+        btnConfirmPassword.textContent = "Simpan Kata Sandi";
+      }
+      if (passwordForm instanceof HTMLFormElement) {
+        passwordForm.removeAttribute("aria-busy");
+      }
     }
   }
 
   function resetForm() {
-    passwordForm.reset();
+    if (passwordForm instanceof HTMLFormElement) {
+      passwordForm.reset();
+    }
     clearAllErrors();
     document.querySelectorAll("[data-password-target]").forEach((toggle) => {
-      const input = document.getElementById(toggle.dataset.passwordTarget);
+      if (!(toggle instanceof HTMLElement)) return;
+      const targetId = toggle.dataset.passwordTarget;
+      const input = targetId ? document.getElementById(targetId) : null;
       if (input instanceof HTMLInputElement) input.type = "password";
       toggle.classList.remove("is-visible");
       toggle.setAttribute("aria-pressed", "false");
       toggle.setAttribute("aria-label", "Tampilkan kata sandi");
     });
   }
+
+  function openPasswordPanel() {
+    resetForm();
+    if (passwordDialog instanceof HTMLDialogElement) {
+      passwordDialog.show();
+      if (profileTitle instanceof HTMLElement) {
+        profileTitle.textContent = "UBAH KATA SANDI";
+      }
+    }
+    updateViewState({ panel: "password" });
+    if (passwordCurrentInput instanceof HTMLInputElement) {
+      passwordCurrentInput.focus();
+    }
+  }
+
+  function closePasswordPanel() {
+    if (passwordDialog instanceof HTMLDialogElement && passwordDialog.open) {
+      passwordDialog.close();
+    }
+  }
+
+  window.addEventListener("recipe:navigate-home", closePasswordPanel);
+  window.addEventListener("recipe:navigate-saved", closePasswordPanel);
 
   btnChangePassword?.addEventListener("click", () => {
     if (!localStorage.getItem("token")) {
@@ -193,14 +263,7 @@ export function initUbahKataSandi() {
       }
       return;
     }
-    resetForm();
-    if (passwordDialog instanceof HTMLDialogElement) {
-      passwordDialog.show();
-      if (profileTitle instanceof HTMLElement) {
-        profileTitle.textContent = "UBAH KATA SANDI";
-      }
-    }
-    passwordCurrentInput.focus();
+    openPasswordPanel();
   });
 
   btnCancelPassword?.addEventListener("click", () => {
@@ -208,6 +271,7 @@ export function initUbahKataSandi() {
   });
 
   passwordDialog?.addEventListener("close", () => {
+    updateViewState({ panel: null });
     resetForm();
     if (profileTitle instanceof HTMLElement) {
       profileTitle.textContent = defaultProfileTitle;
@@ -217,14 +281,11 @@ export function initUbahKataSandi() {
     void handlePasswordSubmit(event);
   });
 
-  fields.forEach((input) => input?.addEventListener("input", () => {
-    clearFieldError(input);
-    clearFormError();
-  }));
-
   document.querySelectorAll("[data-password-target]").forEach((toggle) => {
     toggle.addEventListener("click", () => {
-      const input = document.getElementById(toggle.dataset.passwordTarget);
+      if (!(toggle instanceof HTMLElement)) return;
+      const targetId = toggle.dataset.passwordTarget;
+      const input = targetId ? document.getElementById(targetId) : null;
       if (!(input instanceof HTMLInputElement)) return;
 
       const isVisible = input.type === "text";
@@ -241,4 +302,14 @@ export function initUbahKataSandi() {
   btnSuccessOk?.addEventListener("click", () => {
     if (successModal instanceof HTMLDialogElement) successModal.close();
   });
+
+  // Pulihkan form ubah kata sandi setelah refresh (?view=profile&panel=password).
+  // initProfile sudah memulihkan halaman profilnya lebih dulu (urutan di main.js).
+  if (readViewState().panel === "password") {
+    if (localStorage.getItem("token")) {
+      openPasswordPanel();
+    } else {
+      updateViewState({ panel: null });
+    }
+  }
 }

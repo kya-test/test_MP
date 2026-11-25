@@ -1,6 +1,45 @@
+const LEADING_UNIT_PATTERN =
+  /^(?:\d+(?:[.,/]\d+)?\s*)?(?:gram|grams|gr|g|kg|mg|ml|l|liter|sdt|sdm|sendok\s+teh|sendok\s+makan|buah|butir|siung|lembar|batang|potong|biji|bungkus|pack|kaleng|gelas|cup|ons|ikat)\b[\s\-:.)]*/i;
+
+function formatPreviewIngredient(ingredient) {
+  if (!ingredient || typeof ingredient !== "object") {
+    return String(ingredient || "Bahan").trim();
+  }
+
+  let text = String(
+    ingredient.nama_bahan ??
+      ingredient.nama ??
+      ingredient.bahan ??
+      "",
+  ).trim();
+
+  if (!text) {
+    text = String(
+      ingredient.jumlah ??
+        ingredient.takaran ??
+        ingredient.kuantitas ??
+        "",
+    ).trim();
+  }
+
+  // Bersihkan angka takaran di depan dan awalan satuan seperti "gram", "gr", "sdm", dll.
+  while (text) {
+    const cleaned = text.replace(LEADING_UNIT_PATTERN, "").trim();
+    if (cleaned === text) {
+      break;
+    }
+    text = cleaned;
+  }
+
+  // Jika setelah dibersihkan masih diawali angka/pecahan takaran, buang bagian depannya
+  text = text.replace(/^\d+(?:[.,/]\d+)?\s*/, "").trim();
+
+  return text || "Bahan";
+}
+
 export function createRecipeCard(
   recipe,
-  { searchedIngredientCount, maxIngredientCount } = {},
+  { searchedIngredientCount } = {},
 ) {
   const card = document.createElement("article");
   const name = recipe.nama_resep || "Resep tanpa nama";
@@ -13,7 +52,7 @@ export function createRecipeCard(
   card.dataset.availableIngredients = JSON.stringify(recipe.bahan_cocok || []);
   card.dataset.name = name.toLocaleLowerCase("id");
   card.dataset.ingredients = ingredients
-    .map((ingredient) => ingredient.nama_bahan || "")
+    .map((ingredient) => formatPreviewIngredient(ingredient))
     .join(" ")
     .toLocaleLowerCase("id");
   card.tabIndex = 0;
@@ -22,7 +61,9 @@ export function createRecipeCard(
 
   // 1. Judul Resep
   const title = document.createElement("h2");
-  title.textContent = name;
+  const titleText = document.createElement("span");
+  titleText.textContent = name;
+  title.append(titleText);
 
   // 2. Container Meta (Bahan, Like, Badge Ketersediaan)
   const meta = document.createElement("div");
@@ -32,14 +73,11 @@ export function createRecipeCard(
   const ingredientSection = document.createElement("div");
   ingredientSection.className = "recipe-ingredients";
   const ingredientList = document.createElement("ol");
-  const mainIngredients = ingredients
-    .filter((ingredient) => ingredient.is_bumbu_dasar !== true)
-    .slice(0, 5);
+  const mainIngredients = ingredients.slice(0, 5);
 
   for (const ingredient of mainIngredients) {
     const item = document.createElement("li");
-    const ingredientName = ingredient.nama_bahan || "Bahan";
-    item.textContent = ingredientName;
+    item.textContent = formatPreviewIngredient(ingredient);
     ingredientList.append(item);
   }
   ingredientSection.append(ingredientList);
@@ -63,23 +101,26 @@ export function createRecipeCard(
   likeCountLabel.textContent = String(likeCount);
   likes.append(likeIcon, likeCountLabel);
 
-  // Masukkan bahan dan likes ke meta secara berurutan sekali saja
   meta.append(ingredientSection, likes);
 
-  // Badge ketersediaan bahan (jika ada hasil pencarian kombinasi)
-  if (
-    Array.isArray(recipe.bahan_cocok) &&
-    Number.isInteger(searchedIngredientCount) &&
-    searchedIngredientCount > 0 &&
-    Number.isInteger(maxIngredientCount) &&
-    maxIngredientCount > 0
-  ) {
-    const matchedIngredients = recipe.bahan_cocok.length;
-
-    const availabilityBadge = document.createElement("span");
-    availabilityBadge.className = "recipe-availability";
-    availabilityBadge.textContent = `${matchedIngredients}/${maxIngredientCount} Bahan Tersedia`;
-    meta.append(availabilityBadge);
+  if (Number.isInteger(searchedIngredientCount) && searchedIngredientCount > 0) {
+    card.classList.add("has-availability");
+    const matchedIngredients = Array.isArray(recipe.bahan_cocok)
+      ? recipe.bahan_cocok
+      : [];
+    const availableCount = matchedIngredients.length > 0
+      ? matchedIngredients.length
+      : Math.max(0, Number(recipe.jumlah_cocok) || 0);
+    const denominator = searchedIngredientCount;
+    const matchedCount = Math.min(availableCount, denominator);
+    const availability = document.createElement("span");
+    availability.className = "recipe-availability";
+    availability.textContent = `${matchedCount}/${denominator} bahan tersedia`;
+    availability.setAttribute(
+      "aria-label",
+      `${matchedCount} dari ${denominator} bahan tersedia`,
+    );
+    meta.append(availability);
   }
 
   card.append(title, meta);
@@ -92,11 +133,11 @@ export function renderPagination(
   totalPages,
   onPageSelect,
   maxPageNumber,
+  showSinglePage = false,
 ) {
   container.replaceChildren();
-  container.hidden = totalPages <= 1;
-  container.hidden = false;
   totalPages = Math.max(1, Number(totalPages) || 1);
+  container.hidden = totalPages <= 1 && !showSinglePage;
 
   if (Number.isInteger(maxPageNumber) && maxPageNumber > 0) {
     const lastPage = Math.min(totalPages, maxPageNumber);

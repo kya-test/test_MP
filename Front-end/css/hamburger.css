@@ -25,20 +25,18 @@
 }
 
 .menu-drawer {
-  position: fixed;
+  position: absolute;
   z-index: 999;
-  inset: 0 0 auto auto;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: auto;
   width: min(242px, 55%);
-  height: 100vh;
-  height: 100dvh;
   min-height: 100vh;
-  min-height: 100dvh;
   padding-top: 122px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
   border-radius: 10px 0 0 10px;
   background: var(--cream);
-  box-shadow: -4px 0 15px rgb(0 0 0 / 25%);
+  box-shadow: -4px 0 15px rgba(0, 0, 0, 0.25);
   opacity: 0;
   pointer-events: none;
   transform: translateX(100%);
@@ -59,12 +57,14 @@
 }
 
 .drawer-backdrop {
-  position: fixed;
+  position: absolute;
   z-index: 998;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   width: 100%;
-  height: 100vh;
-  height: 100dvh;
+  height: 100%;
   padding: 0;
   border: 0;
   background: transparent;
@@ -108,18 +108,11 @@
   padding: 0 20px;
   border-radius: 5px 0 0 5px;
   background: var(--white);
-  box-shadow: 0 4px 10px rgb(0 0 0 / 25%);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
   color: var(--charcoal);
   font-family: var(--font-heading);
   font-size: 14px;
   text-decoration: none;
-}
-
-.drawer-link img {
-  display: block;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
 }
 
 .drawer-link.is-active {
@@ -129,6 +122,13 @@
 
 .drawer-link.is-active img {
   filter: brightness(0) invert(1);
+}
+
+.drawer-link img {
+  display: block;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
 }
 
 .app-shell.is-saved-view .menu-button {

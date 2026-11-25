@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Racik Rasa - Pendaftaran Akun</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="css/register.css">
+  <link rel="stylesheet" href="css/register.css?v=20261123-3">
 </head>
 <body>
+  <a class="auth-back" href="index.html" aria-label="Kembali ke halaman utama" title="Kembali ke halaman utama">
+    <img src="assets/figma/detail-back.png" alt="">
+  </a>
 
   <div class="register-container">
-    <a class="auth-back" href="index.html" aria-label="Kembali ke halaman utama" title="Kembali ke halaman utama">
-      <img src="assets/figma/detail-back.png" alt="">
-    </a>
     
     <!-- Brand Logo -->
     <div class="brand-logo-wrapper">
@@ -69,12 +69,32 @@
     </form>
 
     <div class="divider-container">
-      <span class="divider-text">Atau Masuk Dengan</span>
+      <span class="divider-text">Atau Daftar Dengan</span>
     </div>
 
+    <!-- Google Button Container (Dirender kustom oleh register.js) -->
+    <div
+      id="btnGoogleRegister"
+      style="display: flex; justify-content: center; width: 100%; margin-top: 10px;"
+    ></div>
 
     <div class="login-link-wrapper">
       Sudah Punya Akun? <a href="login.html" class="login-redirect-link">MASUK</a>
+    </div>
+
+    <div
+      class="google-auth-error"
+      id="google-auth-error"
+      role="alert"
+      aria-live="assertive"
+      hidden
+    >
+      <img
+        class="google-auth-error-icon"
+        src="assets/figma/google-auth-error.svg"
+        alt=""
+      />
+      <p>Gagal terhubung dengan Google, silakan coba beberapa saat lagi</p>
     </div>
 
     <dialog class="register-notice-dialog" id="register-notice-dialog" aria-labelledby="register-notice-message">
@@ -86,6 +106,8 @@
 
   </div>
 
+  <!-- Script Google Identity Services SDK -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script type="module" src="js/modules/register.js"></script>
 </body>
-</html>
+</html

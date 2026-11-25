@@ -1,4 +1,9 @@
-const API_BASE_URL = "http://127.0.0.1:5000/api";
+import { readViewState, updateViewState } from "./view-state.js";
+import {
+  API_BASE_URL,
+  isNetworkConnectionError,
+  NETWORK_CONNECTION_ERROR_MESSAGE,
+} from "./api.js";
 
 export function initProfile() {
   const appShell = document.querySelector(".app-shell");
@@ -113,23 +118,24 @@ export function initProfile() {
     }
   }
 
-  function cacheUpdatedUserName(name, updatedUser) {
-    let storedUser = {};
+  function readStoredUser() {
     const storedUserValue = localStorage.getItem("user");
+    if (!storedUserValue) return {};
 
-    if (storedUserValue) {
-      try {
-        const parsedUser = JSON.parse(storedUserValue);
-        if (parsedUser && typeof parsedUser === "object" && !Array.isArray(parsedUser)) {
-          storedUser = parsedUser;
-        } else {
-          console.error("Data pengguna tersimpan tidak valid.");
-        }
-      } catch (error) {
-        console.error("Data pengguna tersimpan tidak valid:", error);
+    try {
+      const parsedUser = JSON.parse(storedUserValue);
+      if (parsedUser && typeof parsedUser === "object" && !Array.isArray(parsedUser)) {
+        return parsedUser;
       }
+      console.error("Data pengguna tersimpan tidak valid.");
+    } catch (error) {
+      console.error("Data pengguna tersimpan tidak valid:", error);
     }
+    return {};
+  }
 
+  function cacheUpdatedUserName(name, updatedUser) {
+    const storedUser = readStoredUser();
     const responseUser =
       updatedUser && typeof updatedUser === "object" && !Array.isArray(updatedUser)
         ? updatedUser
@@ -173,27 +179,34 @@ export function initProfile() {
       console.error("Gagal mengambil profil:", error);
       if (error.status === 401 || error.status === 403) {
         clearAuthState();
+        updateViewState({ view: null });
         setProfileView(false);
         openDialog(guestModal);
         return;
       }
-      showNameStatus(error.message || "Gagal memuat data profil.", true);
+      showNameStatus(
+        isNetworkConnectionError(error)
+          ? NETWORK_CONNECTION_ERROR_MESSAGE
+          : error.message || "Gagal memuat data profil.",
+        true,
+      );
     }
   }
 
   async function saveName() {
     const token = localStorage.getItem("token");
-    const namaBaru = nameNextInput?.value ?? "";
+    const rawName = nameNextInput instanceof HTMLInputElement ? nameNextInput.value : "";
+    const namaBaru = rawName.trim();
 
     clearNameError();
     if (namaBaru.length === 0) {
       setNameError("Kolom ini wajib diisi");
-      nameNextInput?.focus();
+      if (nameNextInput instanceof HTMLInputElement) nameNextInput.focus();
       return;
     }
     if (namaBaru.length > 64) {
       setNameError("Nama lengkap maksimal 64 karakter");
-      nameNextInput?.focus();
+      if (nameNextInput instanceof HTMLInputElement) nameNextInput.focus();
       return;
     }
     if (!token) {
@@ -202,8 +215,13 @@ export function initProfile() {
       return;
     }
 
-    btnConfirmName.disabled = true;
-    btnConfirmName.textContent = "Menyimpan...";
+    const confirmBtn =
+      btnConfirmName instanceof HTMLButtonElement ? btnConfirmName : null;
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = "Menyimpan...";
+    }
+
     try {
       const result = await requestApi("/auth/profile", {
         method: "PUT",
@@ -221,11 +239,24 @@ export function initProfile() {
       openDialog(nameSuccessDialog);
     } catch (error) {
       console.error("Gagal mengubah nama:", error);
-      setNameError(error.message || "Gagal mengubah nama.");
+      setNameError(
+        isNetworkConnectionError(error)
+          ? NETWORK_CONNECTION_ERROR_MESSAGE
+          : error.message || "Gagal mengubah nama.",
+      );
     } finally {
-      btnConfirmName.disabled = false;
-      btnConfirmName.textContent = "SIMPAN";
+      if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "SIMPAN";
+      }
     }
+  }
+
+  function getCurrentDisplayName() {
+    const currentText = fullnameBox?.textContent?.trim();
+    if (currentText && currentText !== "Memuat...") return currentText;
+    const storedUser = readStoredUser();
+    return storedUser.nama || storedUser.nama_lengkap || storedUser.name || "";
   }
 
   function handleProfileNavigation() {
@@ -235,11 +266,13 @@ export function initProfile() {
     }
     showNameStatus("");
     setProfileView(true);
+    updateViewState({ view: "profile", recipe: null });
     void fetchUserData();
   }
 
   window.addEventListener("recipe:navigate-profile", handleProfileNavigation);
   window.addEventListener("recipe:navigate-home", () => {
+    updateViewState({ view: null });
     setProfileView(false);
     [guestModal, logoutModal, nameDialog, nameSuccessDialog].forEach(
       (dialog) => {
@@ -271,10 +304,10 @@ export function initProfile() {
     clearNameError();
     showNameStatus("");
     if (nameNextInput instanceof HTMLInputElement) {
-      nameNextInput.value = fullnameBox?.textContent || "";
+      nameNextInput.value = getCurrentDisplayName();
     }
     openDialog(nameDialog);
-    nameNextInput?.focus();
+    if (nameNextInput instanceof HTMLInputElement) nameNextInput.focus();
   });
 
   btnCancelName?.addEventListener("click", () => {
@@ -287,7 +320,7 @@ export function initProfile() {
   nameDialog?.addEventListener("close", () => {
     clearNameError();
     if (nameNextInput instanceof HTMLInputElement) {
-      nameNextInput.value = fullnameBox?.textContent || "";
+      nameNextInput.value = getCurrentDisplayName();
     }
   });
 
@@ -315,7 +348,19 @@ export function initProfile() {
     clearAuthState();
     if (logoutModal instanceof HTMLDialogElement) logoutModal.close();
     setProfileView(false);
-    window.dispatchEvent(new Event("recipe:navigate-home"));
     window.location.assign(window.location.pathname);
   });
+
+  // Pulihkan halaman profil setelah refresh (?view=profile). Tanpa login tidak ada
+  // profil untuk ditampilkan; layar detail (?recipe=) diutamakan.
+  const restored = readViewState();
+  if (restored.view === "profile") {
+    if (restored.recipe || !localStorage.getItem("token")) {
+      updateViewState({ view: null });
+    } else {
+      setProfileView(true);
+      window.dispatchEvent(new Event("recipe:profile-view-restored"));
+      void fetchUserData();
+    }
+  }
 }

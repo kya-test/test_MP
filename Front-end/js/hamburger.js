@@ -1,8 +1,9 @@
 export function initHumberger() {
-  const menuButtons = document.querySelectorAll("#menu-button");
+  const menuButtons = document.querySelectorAll(".menu-button");
   const navigation = document.querySelector("#bottom-nav");
   const drawerBackdrop = document.querySelector("#drawer-backdrop");
   const signupLink = navigation?.querySelector(".drawer-signup");
+  const drawerLinks = navigation?.querySelectorAll(".drawer-link") ?? [];
   const brandLinks = document.querySelectorAll("[data-home-link]");
   const bookmarkUnavailableDialog = document.querySelector(
     "#bookmark-unavailable-dialog",
@@ -57,34 +58,75 @@ export function initHumberger() {
     signupLink.dataset.navAction = "profile";
   }
 
+  function detectCurrentNavAction() {
+    const appShell = document.querySelector(".app-shell");
+    const profileScreen = document.querySelector("#view-profile");
+    const savedScreen = document.querySelector("#view-saved");
+
+    if (
+      appShell?.classList.contains("is-profile-view") ||
+      (profileScreen instanceof HTMLElement && !profileScreen.hidden)
+    ) {
+      return "profile";
+    }
+
+    if (
+      appShell?.classList.contains("is-saved-view") ||
+      (savedScreen instanceof HTMLElement && !savedScreen.hidden)
+    ) {
+      return "bookmark";
+    }
+
+    return "home";
+  }
+
+  function updateActiveDrawerLink(forcedAction) {
+    const activeAction = forcedAction || detectCurrentNavAction();
+
+    for (const link of drawerLinks) {
+      if (!(link instanceof HTMLAnchorElement)) {
+        continue;
+      }
+      const isCurrent = link.dataset.navAction === activeAction;
+      link.classList.toggle("is-active", isCurrent);
+      if (isCurrent) {
+        link.setAttribute("aria-current", "page");
+      } else {
+        link.removeAttribute("aria-current");
+      }
+    }
+  }
+
   updateSignupLink();
+  updateActiveDrawerLink("home");
+
   window.addEventListener("storage", (event) => {
     if (event.key === "token" || event.key === "user" || event.key === null) {
       updateSignupLink();
     }
   });
-  window.addEventListener("pageshow", updateSignupLink);
+  window.addEventListener("pageshow", () => {
+    updateSignupLink();
+    updateActiveDrawerLink();
+  });
   window.addEventListener("recipe:profile-updated", updateSignupLink);
+  window.addEventListener("recipe:navigate-home", () => {
+    updateActiveDrawerLink("home");
+  });
+  window.addEventListener("recipe:navigate-saved", () => {
+    updateActiveDrawerLink("bookmark");
+  });
+  window.addEventListener("recipe:navigate-profile", () => {
+    updateActiveDrawerLink("profile");
+  });
 
   function getActiveMenuButton() {
-    // Cari tombol menu yang sedang terlihat/tidak tersembunyi di layar aktif
     for (const btn of menuButtons) {
       if (btn.offsetParent !== null) {
         return btn;
       }
     }
     return menuButtons[0];
-  }
-
-  function scrollBackgroundBy(amount) {
-    const activeMenuButton = getActiveMenuButton();
-    const profileScreen = activeMenuButton.closest(".profile-screen");
-    const scrollTarget = profileScreen || document.scrollingElement;
-    if (!scrollTarget) {
-      throw new Error("Area halaman di belakang drawer tidak ditemukan.");
-    }
-
-    scrollTarget.scrollBy(0, amount);
   }
 
   function setNavigationOpen(isOpen) {
@@ -100,6 +142,7 @@ export function initHumberger() {
     drawerBackdrop.inert = !isOpen;
 
     if (isOpen) {
+      updateActiveDrawerLink();
       navigation.hidden = false;
       drawerBackdrop.hidden = false;
       requestAnimationFrame(() => {
@@ -115,19 +158,6 @@ export function initHumberger() {
     drawerBackdrop.classList.remove("is-open");
   }
 
-  function setActiveNavigation(action) {
-    for (const link of navigation.querySelectorAll("[data-nav-action]")) {
-      const isActive = link.dataset.navAction === action;
-      link.classList.toggle("is-active", isActive);
-      if (isActive) {
-        link.setAttribute("aria-current", "page");
-      } else {
-        link.removeAttribute("aria-current");
-      }
-    }
-  }
-
-  // Pasang event listener ke semua tombol hamburger di setiap halaman
   menuButtons.forEach((menuButton) => {
     menuButton.addEventListener("click", () => {
       const isExpanded = menuButton.getAttribute("aria-expanded") === "true";
@@ -141,60 +171,6 @@ export function initHumberger() {
     currentMenuButton.focus();
   });
 
-  drawerBackdrop.addEventListener(
-    "wheel",
-    (event) => {
-      if (event.deltaY === 0) {
-        return;
-      }
-
-      event.preventDefault();
-      scrollBackgroundBy(event.deltaY);
-    },
-    { passive: false },
-  );
-
-  let lastBackdropTouchY = null;
-  drawerBackdrop.addEventListener(
-    "touchstart",
-    (event) => {
-      lastBackdropTouchY = event.touches[0]?.clientY ?? null;
-    },
-    { passive: true },
-  );
-  drawerBackdrop.addEventListener(
-    "touchmove",
-    (event) => {
-      const currentTouchY = event.touches[0]?.clientY;
-      if (
-        lastBackdropTouchY === null ||
-        typeof currentTouchY !== "number"
-      ) {
-        return;
-      }
-
-      event.preventDefault();
-      scrollBackgroundBy(lastBackdropTouchY - currentTouchY);
-      lastBackdropTouchY = currentTouchY;
-    },
-    { passive: false },
-  );
-  drawerBackdrop.addEventListener(
-    "touchend",
-    () => {
-      lastBackdropTouchY = null;
-    },
-    { passive: true },
-  );
-  drawerBackdrop.addEventListener(
-    "touchcancel",
-    () => {
-      lastBackdropTouchY = null;
-    },
-    { passive: true },
-  );
-
-  // Pasang event listener ke semua logo brand
   brandLinks.forEach((brandLink) => {
     brandLink.addEventListener("click", (event) => {
       event.preventDefault();
@@ -224,7 +200,6 @@ export function initHumberger() {
     event.preventDefault();
 
     if (isGuest && (action === "bookmark" || action === "profile")) {
-      setActiveNavigation(action === "bookmark" ? "bookmark" : "home");
       window.dispatchEvent(
         new Event(
           action === "bookmark"
@@ -235,6 +210,10 @@ export function initHumberger() {
       return;
     }
 
+    if (action === "home" || action === "bookmark" || action === "profile") {
+      updateActiveDrawerLink(action);
+    }
+
     setNavigationOpen(false);
     const currentMenuButton = getActiveMenuButton();
     currentMenuButton.focus();
@@ -242,22 +221,19 @@ export function initHumberger() {
     if (action === "home") {
       window.location.assign(window.location.pathname);
     } else if (action === "bookmark") {
-      setActiveNavigation("bookmark");
       window.dispatchEvent(new Event("recipe:navigate-saved"));
     } else if (action === "profile") {
-      setActiveNavigation("profile");
       window.dispatchEvent(new Event("recipe:navigate-profile"));
     }
   });
 
   window.addEventListener("recipe:login-request", () => {
-    setActiveNavigation("profile");
     window.dispatchEvent(new Event("recipe:auth-required"));
   });
 
   window.addEventListener("recipe:login-success", () => {
     updateSignupLink();
-    setActiveNavigation("home");
+    updateActiveDrawerLink("home");
     window.dispatchEvent(new Event("recipe:navigate-home"));
   });
 

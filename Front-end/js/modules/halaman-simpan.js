@@ -1,6 +1,11 @@
 import { createRecipeCard, renderPagination } from "./recipe-view.js";
+import { readViewState, updateViewState } from "./view-state.js";
+import {
+  API_BASE_URL,
+  isNetworkConnectionError,
+  NETWORK_CONNECTION_ERROR_MESSAGE,
+} from "./api.js";
 
-const API_BASE_URL = "http://127.0.0.1:5000/api";
 const ITEMS_PER_PAGE = 6;
 
 export function initHalamanSimpan() {
@@ -14,6 +19,8 @@ export function initHalamanSimpan() {
   const recipeGrid = document.querySelector("#saved-recipe-grid");
   const emptyState = document.querySelector("#saved-empty-state");
   const paginationContainer = document.querySelector("#saved-pagination");
+  const noResultsDialog = document.querySelector("#validation-dialog");
+  const noResultsMessage = document.querySelector("#validation-message");
 
   if (
     !(appShell instanceof HTMLElement) ||
@@ -25,7 +32,9 @@ export function initHalamanSimpan() {
     !(searchInput instanceof HTMLInputElement) ||
     !(recipeGrid instanceof HTMLElement) ||
     !(emptyState instanceof HTMLElement) ||
-    !(paginationContainer instanceof HTMLElement)
+    !(paginationContainer instanceof HTMLElement) ||
+    !(noResultsDialog instanceof HTMLDialogElement) ||
+    !(noResultsMessage instanceof HTMLElement)
   ) {
     throw new Error("Elemen halaman resep tersimpan tidak ditemukan.");
   }
@@ -52,6 +61,14 @@ export function initHalamanSimpan() {
     }
 
     sectionLabel.textContent = isOpen ? "SIMPAN RESEP" : homeTitle;
+  }
+
+  function getFilteredRecipes() {
+    return savedRecipes.filter((recipe) =>
+      String(recipe.nama_resep || "")
+        .toLocaleLowerCase("id")
+        .includes(currentSearchQuery),
+    );
   }
 
   async function fetchBookmarkPage(page, token) {
@@ -95,7 +112,7 @@ export function initHalamanSimpan() {
       return;
     }
 
-    emptyState.textContent = "Memuat resep tersimpan...";
+    emptyState.textContent = "Memuat halaman resep tersimpan...";
     emptyState.hidden = false;
     recipeGrid.replaceChildren();
     paginationContainer.hidden = true;
@@ -123,6 +140,7 @@ export function initHalamanSimpan() {
       }
       if (error.status === 401) {
         localStorage.removeItem("token");
+        updateViewState({ view: null });
         savedRecipes = [];
         recipeGrid.replaceChildren();
         paginationContainer.replaceChildren();
@@ -132,27 +150,23 @@ export function initHalamanSimpan() {
         return;
       }
       console.error("Gagal memuat resep tersimpan:", error);
-      emptyState.textContent = `Resep tersimpan tidak dapat dimuat. ${error.message}`;
+      emptyState.textContent = isNetworkConnectionError(error)
+        ? NETWORK_CONNECTION_ERROR_MESSAGE
+        : `Tidak ada koneksi internet. Coba lagi saat terhubung ${error.message}`;
       emptyState.hidden = false;
       recipeGrid.replaceChildren();
     }
   }
 
   function renderCurrentPage(animate = false) {
-    const filteredRecipes = savedRecipes.filter((recipe) =>
-      String(recipe.nama_resep || "")
-        .toLocaleLowerCase("id")
-        .includes(currentSearchQuery),
-    );
+    const filteredRecipes = getFilteredRecipes();
     const totalPages = Math.ceil(filteredRecipes.length / ITEMS_PER_PAGE);
     const render = () => {
       recipeGrid.replaceChildren();
 
       if (filteredRecipes.length === 0) {
-        emptyState.textContent = currentSearchQuery
-          ? "Resep tidak ditemukan."
-          : "Belum ada resep yang disimpan.";
-        emptyState.hidden = false;
+        emptyState.textContent = "Belum ada resep yang disimpan.";
+        emptyState.hidden = Boolean(currentSearchQuery);
         paginationContainer.replaceChildren();
         paginationContainer.hidden = true;
         return;
@@ -196,6 +210,8 @@ export function initHalamanSimpan() {
           renderCurrentPage(true);
           window.scrollTo({ top: 0, behavior: "smooth" });
         },
+        undefined,
+        true,
       );
     };
 
@@ -221,6 +237,14 @@ export function initHalamanSimpan() {
   });
   searchForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (!currentSearchQuery || getFilteredRecipes().length > 0) {
+      return;
+    }
+
+    noResultsMessage.textContent = "Resep tidak ditemukan.";
+    if (!noResultsDialog.open) {
+      noResultsDialog.showModal();
+    }
   });
 
   window.addEventListener("recipe:navigate-saved", () => {
@@ -238,6 +262,7 @@ export function initHalamanSimpan() {
 
     // 2. Jika user terautentikasi, tampilkan view halaman simpan
     setSavedView(true);
+    updateViewState({ view: "saved", recipe: null });
     searchInput.value = "";
     currentSearchQuery = "";
     currentPage = 1;
@@ -245,10 +270,25 @@ export function initHalamanSimpan() {
     void loadSavedRecipes();
   });
 
-  window.addEventListener("recipe:navigate-home", () => setSavedView(false));
+  window.addEventListener("recipe:navigate-home", () => {
+    updateViewState({ view: null });
+    setSavedView(false);
+  });
   window.addEventListener("recipe:saved-refresh", () => {
     if (!savedScreen.hidden) {
       void loadSavedRecipes();
     }
   });
+
+  // Pulihkan halaman simpan setelah refresh (?view=saved). Jika ada ?recipe=, detail
+  // yang membukanya ditumpuk di atas oleh input.js (restoreFromUrl).
+  if (readViewState().view === "saved") {
+    if (!localStorage.getItem("token")) {
+      updateViewState({ view: null });
+    } else {
+      setSavedView(true);
+      window.dispatchEvent(new Event("recipe:saved-view-restored"));
+      void loadSavedRecipes();
+    }
+  }
 }
